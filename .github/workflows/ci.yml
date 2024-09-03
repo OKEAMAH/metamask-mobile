@@ -121,7 +121,7 @@ jobs:
           node-version-file: '.nvmrc'
           cache: yarn
       - run: yarn setup
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4.1.7
         with:
           path: tests/coverage/
       - name: Gather partial coverage reports into one directory
@@ -149,7 +149,7 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0 # SonarCloud needs a full checkout to perform necessary analysis
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4.1.7
         with:
           name: coverage
           path: coverage/
