@@ -21,6 +21,7 @@ import {
   getPermittedAccountsByHostname,
 } from '../../../core/Permissions';
 import AccountConnectMultiSelector from '../AccountConnect/AccountConnectMultiSelector';
+import NetworkConnectMultiSelector from '../NetworkConnect/NetworkConnectMultiSelector';
 import Logger from '../../../util/Logger';
 import {
   ToastContext,
@@ -52,6 +53,9 @@ import { useMetrics } from '../../../components/hooks/useMetrics';
 import { selectInternalAccounts } from '../../../selectors/accountsController';
 import { selectPermissionControllerState } from '../../../selectors/snaps/permissionController';
 import { RootState } from '../../../reducers';
+import { isMultichainVersion1Enabled } from '../../../util/networks';
+import PermissionsSummary from '../../../components/UI/PermissionsSummary';
+import { PermissionsSummaryProps } from '../../../components/UI/PermissionsSummary/PermissionsSummary.types';
 
 const AccountPermissions = (props: AccountPermissionsProps) => {
   const navigation = useNavigation();
@@ -60,6 +64,8 @@ const AccountPermissions = (props: AccountPermissionsProps) => {
     hostInfo: {
       metadata: { origin: hostname },
     },
+    isRenderedAsBottomSheet = true,
+    initialScreen = AccountPermissionsScreens.Connected,
   } = props.route.params;
   const accountAvatarType = useSelector((state: RootState) =>
     state.settings.useBlockieIcon
@@ -98,7 +104,7 @@ const AccountPermissions = (props: AccountPermissionsProps) => {
   const [selectedAddresses, setSelectedAddresses] = useState<string[]>([]);
   const sheetRef = useRef<BottomSheetRef>(null);
   const [permissionsScreen, setPermissionsScreen] =
-    useState<AccountPermissionsScreens>(AccountPermissionsScreens.Connected);
+    useState<AccountPermissionsScreens>(initialScreen);
   const { accounts, ensByAccountAddress } = useAccounts({
     isLoading,
   });
@@ -120,18 +126,45 @@ const AccountPermissions = (props: AccountPermissionsProps) => {
   useEffect(() => {
     if (
       previousPermittedAccounts.current === undefined &&
-      permittedAccountsByHostname.length === 0
+      permittedAccountsByHostname.length === 0 &&
+      isRenderedAsBottomSheet
     ) {
       // TODO - Figure out better UX instead of auto dismissing. However, we cannot be in this state as long as accounts are not connected.
       hideSheet();
-      toastRef?.current?.showToast({
+
+      const plainToastProps: ToastOptions = {
         variant: ToastVariants.Plain,
         labelOptions: [{ label: strings('toast.disconnected_all') }],
         hasNoTimeout: false,
-      });
+      };
+
+      const networkToastProps: ToastOptions = {
+        variant: ToastVariants.Network,
+        labelOptions: [
+          {
+            label: strings('toast.disconnected_from', {
+              dappHostName: hostname,
+            }),
+          },
+        ],
+        hasNoTimeout: false,
+        networkImageSource: faviconSource,
+      };
+
+      toastRef?.current?.showToast(
+        isMultichainVersion1Enabled ? networkToastProps : plainToastProps,
+      );
+
       previousPermittedAccounts.current = permittedAccountsByHostname.length;
     }
-  }, [permittedAccountsByHostname, hideSheet, toastRef]);
+  }, [
+    permittedAccountsByHostname,
+    hideSheet,
+    toastRef,
+    hostname,
+    faviconSource,
+    isRenderedAsBottomSheet,
+  ]);
 
   // Refreshes selected addresses based on the addition and removal of accounts.
   useEffect(() => {
@@ -342,7 +375,29 @@ const AccountPermissions = (props: AccountPermissionsProps) => {
     ],
   );
 
-  const renderConnectScreen = useCallback(
+  const renderPermissionsSummaryScreen = useCallback(() => {
+    const permissionsSummaryProps: PermissionsSummaryProps = {
+      currentPageInformation: {
+        currentEnsName: '',
+        icon: faviconSource as string,
+        url: urlWithProtocol,
+      },
+      onEdit: () =>
+        setPermissionsScreen(AccountPermissionsScreens.EditAccountsPermissions),
+      onEditNetworks: () =>
+        setPermissionsScreen(AccountPermissionsScreens.ConnectMoreNetworks),
+      onUserAction: setUserIntent,
+      showActionButtons: false,
+      onBack: () =>
+        isRenderedAsBottomSheet
+          ? setPermissionsScreen(AccountPermissionsScreens.Connected)
+          : navigation.navigate('PermissionsManager'),
+      isRenderedAsBottomSheet,
+    };
+    return <PermissionsSummary {...permissionsSummaryProps} />;
+  }, [faviconSource, urlWithProtocol, isRenderedAsBottomSheet, navigation]);
+
+  const renderEditAccountsPermissionsScreen = useCallback(
     () => (
       <AccountConnectMultiSelector
         accounts={accountsFilteredByPermissions.unpermitted}
@@ -353,9 +408,14 @@ const AccountPermissions = (props: AccountPermissionsProps) => {
         onUserAction={setUserIntent}
         favicon={faviconSource}
         urlWithProtocol={urlWithProtocol}
+        hostname={hostname}
         secureIcon={secureIcon}
         isAutoScrollEnabled={false}
-        onBack={() => setPermissionsScreen(AccountPermissionsScreens.Connected)}
+        onBack={() =>
+          setPermissionsScreen(AccountPermissionsScreens.PermissionsSummary)
+        }
+        screenTitle={strings('accounts.edit_accounts_title')}
+        isRenderedAsBottomSheet={isRenderedAsBottomSheet}
       />
     ),
     [
@@ -367,6 +427,62 @@ const AccountPermissions = (props: AccountPermissionsProps) => {
       faviconSource,
       urlWithProtocol,
       secureIcon,
+      hostname,
+      isRenderedAsBottomSheet,
+    ],
+  );
+
+  const renderConnectMoreAccountsScreen = useCallback(
+    () => (
+      <AccountConnectMultiSelector
+        accounts={accountsFilteredByPermissions.unpermitted}
+        ensByAccountAddress={ensByAccountAddress}
+        selectedAddresses={selectedAddresses}
+        onSelectAddress={setSelectedAddresses}
+        isLoading={isLoading}
+        onUserAction={setUserIntent}
+        favicon={faviconSource}
+        urlWithProtocol={urlWithProtocol}
+        hostname={hostname}
+        secureIcon={secureIcon}
+        isAutoScrollEnabled={false}
+        onBack={() => setPermissionsScreen(AccountPermissionsScreens.Connected)}
+        screenTitle={strings('accounts.connect_more_accounts')}
+      />
+    ),
+    [
+      ensByAccountAddress,
+      selectedAddresses,
+      isLoading,
+      accountsFilteredByPermissions,
+      setUserIntent,
+      faviconSource,
+      urlWithProtocol,
+      secureIcon,
+      hostname,
+    ],
+  );
+
+  const renderConnectNetworksScreen = useCallback(
+    () => (
+      <NetworkConnectMultiSelector
+        onSelectNetworkIds={setSelectedAddresses}
+        isLoading={isLoading}
+        onUserAction={setUserIntent}
+        urlWithProtocol={urlWithProtocol}
+        hostname={hostname}
+        onBack={() =>
+          setPermissionsScreen(AccountPermissionsScreens.PermissionsSummary)
+        }
+        isRenderedAsBottomSheet={isRenderedAsBottomSheet}
+      />
+    ),
+    [
+      isLoading,
+      setUserIntent,
+      urlWithProtocol,
+      hostname,
+      isRenderedAsBottomSheet,
     ],
   );
 
@@ -403,19 +519,32 @@ const AccountPermissions = (props: AccountPermissionsProps) => {
     switch (permissionsScreen) {
       case AccountPermissionsScreens.Connected:
         return renderConnectedScreen();
-      case AccountPermissionsScreens.Connect:
-        return renderConnectScreen();
+      case AccountPermissionsScreens.ConnectMoreAccounts:
+        return renderConnectMoreAccountsScreen();
+      case AccountPermissionsScreens.EditAccountsPermissions:
+        return renderEditAccountsPermissionsScreen();
+      case AccountPermissionsScreens.ConnectMoreNetworks:
+        return renderConnectNetworksScreen();
       case AccountPermissionsScreens.Revoke:
         return renderRevokeScreen();
+      case AccountPermissionsScreens.PermissionsSummary:
+        return renderPermissionsSummaryScreen();
     }
   }, [
     permissionsScreen,
     renderConnectedScreen,
-    renderConnectScreen,
+    renderConnectMoreAccountsScreen,
+    renderEditAccountsPermissionsScreen,
+    renderConnectNetworksScreen,
     renderRevokeScreen,
+    renderPermissionsSummaryScreen,
   ]);
 
-  return <BottomSheet ref={sheetRef}>{renderPermissionsScreens()}</BottomSheet>;
+  return isRenderedAsBottomSheet ? (
+    <BottomSheet ref={sheetRef}>{renderPermissionsScreens()}</BottomSheet>
+  ) : (
+    renderPermissionsScreens()
+  );
 };
 
 export default AccountPermissions;

@@ -9,11 +9,8 @@ import {
 import React, { useCallback, useRef, useState } from 'react';
 import { ScrollView } from 'react-native-gesture-handler';
 import images from 'images/image-icons';
-import { useNavigation } from '@react-navigation/native';
-import {
-  NetworkConfiguration,
-  ProviderConfig,
-} from '@metamask/network-controller';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { NetworkConfiguration } from '@metamask/network-controller';
 
 // External dependencies.
 import SheetHeader from '../../../component-library/components/Sheet/SheetHeader';
@@ -33,6 +30,7 @@ import { useSelector } from 'react-redux';
 import {
   selectNetworkConfigurations,
   selectProviderConfig,
+  ProviderConfig,
 } from '../../../selectors/networkController';
 import { selectShowTestNetworks } from '../../../selectors/preferencesController';
 import Networks, {
@@ -95,6 +93,7 @@ import {
   LINEA_DEFAULT_RPC_URL,
   MAINNET_DEFAULT_RPC_URL,
 } from '../../../constants/urls';
+import { useNetworkInfo } from '../../../selectors/selectedNetworkController';
 
 interface infuraNetwork {
   name: string;
@@ -106,6 +105,14 @@ interface ShowConfirmDeleteModalState {
   isVisible: boolean;
   networkName: string;
   entry?: [string, NetworkConfiguration & { id: string }];
+}
+
+interface NetworkSelectorRouteParams {
+  hostInfo?: {
+    metadata?: {
+      origin?: string;
+    };
+  };
 }
 
 const NetworkSelector = () => {
@@ -123,6 +130,19 @@ const NetworkSelector = () => {
 
   const providerConfig: ProviderConfig = useSelector(selectProviderConfig);
   const networkConfigurations = useSelector(selectNetworkConfigurations);
+
+  const route =
+    useRoute<RouteProp<Record<string, NetworkSelectorRouteParams>, string>>();
+
+  // origin is defined if network selector is opened from a dapp
+  const origin = route.params?.hostInfo?.metadata?.origin || '';
+
+  const {
+    chainId: selectedChainId,
+    rpcUrl: selectedRpcUrl,
+    domainIsConnectedDapp,
+    networkName: selectedNetworkName,
+  } = useNetworkInfo(origin);
 
   const avatarSize = isNetworkUiRedesignEnabled() ? AvatarSize.Sm : undefined;
   const modalTitle = isNetworkUiRedesignEnabled()
@@ -173,38 +193,44 @@ const NetworkSelector = () => {
       NetworkController,
       CurrencyRateController,
       AccountTrackerController,
+      SelectedNetworkController,
     } = Engine.context;
 
-    let ticker = type;
-    if (type === LINEA_SEPOLIA) {
-      ticker = TESTNET_TICKER_SYMBOLS.LINEA_SEPOLIA as InfuraNetworkType;
-    }
-    if (type === SEPOLIA) {
-      ticker = TESTNET_TICKER_SYMBOLS.SEPOLIA as InfuraNetworkType;
-    }
+    if (domainIsConnectedDapp && process.env.MULTICHAIN_V1) {
+      SelectedNetworkController.setNetworkClientIdForDomain(origin, type);
+    } else {
+      let ticker = type;
+      if (type === LINEA_SEPOLIA) {
+        ticker = TESTNET_TICKER_SYMBOLS.LINEA_SEPOLIA as InfuraNetworkType;
+      }
+      if (type === SEPOLIA) {
+        ticker = TESTNET_TICKER_SYMBOLS.SEPOLIA as InfuraNetworkType;
+      }
 
-    CurrencyRateController.updateExchangeRate(ticker);
-    NetworkController.setProviderType(type);
-    AccountTrackerController.refresh();
+      CurrencyRateController.updateExchangeRate(ticker);
+      NetworkController.setProviderType(type);
+      AccountTrackerController.refresh();
 
-    setTimeout(async () => {
-      await updateIncomingTransactions();
-    }, 1000);
+      setTimeout(async () => {
+        await updateIncomingTransactions();
+      }, 1000);
+    }
 
     sheetRef.current?.onCloseBottomSheet();
 
     trackEvent(MetaMetricsEvents.NETWORK_SWITCHED, {
-      chain_id: getDecimalChainId(providerConfig.chainId),
-      from_network:
-        providerConfig.type === 'rpc'
-          ? providerConfig.nickname
-          : providerConfig.type,
+      chain_id: getDecimalChainId(selectedChainId),
+      from_network: selectedNetworkName,
       to_network: type,
     });
   };
 
   const onSetRpcTarget = async (rpcTarget: string) => {
-    const { CurrencyRateController, NetworkController } = Engine.context;
+    const {
+      CurrencyRateController,
+      NetworkController,
+      SelectedNetworkController,
+    } = Engine.context;
 
     const entry = Object.entries(networkConfigurations).find(([, { rpcUrl }]) =>
       compareRpcUrls(rpcUrl, rpcTarget),
@@ -214,14 +240,20 @@ const NetworkSelector = () => {
       const [networkConfigurationId, networkConfiguration] = entry;
       const { ticker, nickname } = networkConfiguration;
 
-      CurrencyRateController.updateExchangeRate(ticker);
-
-      NetworkController.setActiveNetwork(networkConfigurationId);
+      if (domainIsConnectedDapp && process.env.MULTICHAIN_V1) {
+        SelectedNetworkController.setNetworkClientIdForDomain(
+          origin,
+          networkConfigurationId,
+        );
+      } else {
+        CurrencyRateController.updateExchangeRate(ticker);
+        NetworkController.setActiveNetwork(networkConfigurationId);
+      }
 
       sheetRef.current?.onCloseBottomSheet();
       trackEvent(MetaMetricsEvents.NETWORK_SWITCHED, {
         chain_id: getDecimalChainId(providerConfig.chainId),
-        from_network: providerConfig.type,
+        from_network: selectedNetworkName,
         to_network: nickname,
       });
     }
@@ -309,7 +341,7 @@ const NetworkSelector = () => {
     networkName: string,
   ) => {
     const searchResult: ExtendedNetwork[] = networks.filter(({ name }) =>
-      name.toLowerCase().includes(networkName.toLowerCase()),
+      name?.toLowerCase().includes(networkName.toLowerCase()),
     );
 
     return searchResult;
@@ -350,14 +382,14 @@ const NetworkSelector = () => {
             imageSource: images.ETHEREUM,
             size: AvatarSize.Sm,
           }}
-          isSelected={
-            chainId === providerConfig.chainId && !providerConfig.rpcUrl
-          }
+          isSelected={chainId === selectedChainId && !providerConfig.rpcUrl}
           onPress={() => onNetworkChange(MAINNET)}
           style={styles.networkCell}
           buttonIcon={IconName.MoreVertical}
-          onButtonClick={() => {
-            openModal(chainId, false, MAINNET, true);
+          buttonProps={{
+            onButtonClick: () => {
+              openModal(chainId, false, MAINNET, true);
+            },
           }}
           // TODO: Substitute with the new network controller's RPC array.
           onTextClick={() =>
@@ -381,9 +413,7 @@ const NetworkSelector = () => {
           imageSource: images.ETHEREUM,
           size: avatarSize,
         }}
-        isSelected={
-          chainId === providerConfig.chainId && !providerConfig.rpcUrl
-        }
+        isSelected={chainId === selectedChainId && !providerConfig.rpcUrl}
         onPress={() => onNetworkChange(MAINNET)}
         style={styles.networkCell}
       />
@@ -408,13 +438,15 @@ const NetworkSelector = () => {
             imageSource: images['LINEA-MAINNET'],
             size: AvatarSize.Sm,
           }}
-          isSelected={chainId === providerConfig.chainId}
+          isSelected={chainId === selectedChainId}
           onPress={() => onNetworkChange(LINEA_MAINNET)}
           style={styles.networkCell}
           buttonIcon={IconName.MoreVertical}
           secondaryText={hideKeyFromUrl(LINEA_DEFAULT_RPC_URL)}
-          onButtonClick={() => {
-            openModal(chainId, false, LINEA_MAINNET, true);
+          buttonProps={{
+            onButtonClick: () => {
+              openModal(chainId, false, LINEA_MAINNET, true);
+            },
           }}
           // TODO: Substitute with the new network controller's RPC array.
           onTextClick={() =>
@@ -438,7 +470,7 @@ const NetworkSelector = () => {
           imageSource: images['LINEA-MAINNET'],
           size: avatarSize,
         }}
-        isSelected={chainId === providerConfig.chainId}
+        isSelected={chainId === selectedChainId && !providerConfig.rpcUrl}
         onPress={() => onNetworkChange(LINEA_MAINNET)}
       />
     );
@@ -469,14 +501,16 @@ const NetworkSelector = () => {
                 size: AvatarSize.Sm,
               }}
               isSelected={Boolean(
-                chainId === providerConfig.chainId && providerConfig.rpcUrl,
+                chainId === selectedChainId && selectedRpcUrl,
               )}
               onPress={() => onSetRpcTarget(rpcUrl)}
               style={styles.networkCell}
               buttonIcon={IconName.MoreVertical}
               secondaryText={hideProtocolFromUrl(hideKeyFromUrl(rpcUrl))}
-              onButtonClick={() => {
-                openModal(chainId, true, rpcUrl, false);
+              buttonProps={{
+                onButtonClick: () => {
+                  openModal(chainId, true, rpcUrl, false);
+                },
               }}
               // TODO: Substitute with the new network controller's RPC array.
               onTextClick={() =>
@@ -492,7 +526,8 @@ const NetworkSelector = () => {
 
         return (
           <Cell
-            key={chainId}
+            key={`${chainId}-${rpcUrl}`}
+            testID={NetworkListModalSelectorsIDs.CUSTOM_NETWORK_CELL(name)}
             variant={CellVariant.Select}
             title={name}
             avatarProps={{
@@ -502,11 +537,15 @@ const NetworkSelector = () => {
               size: avatarSize,
             }}
             isSelected={Boolean(
-              chainId === providerConfig.chainId && providerConfig.rpcUrl,
+              chainId === selectedChainId && selectedRpcUrl === rpcUrl,
             )}
             onPress={() => onSetRpcTarget(rpcUrl)}
             style={styles.networkCell}
-          />
+          >
+            {Boolean(
+              chainId === selectedChainId && selectedRpcUrl === rpcUrl,
+            ) && <View testID={`${name}-selected`} />}
+          </Cell>
         );
       },
     );
@@ -536,12 +575,14 @@ const NetworkSelector = () => {
               imageSource,
               size: AvatarSize.Sm,
             }}
-            isSelected={chainId === providerConfig.chainId}
+            isSelected={chainId === selectedChainId}
             onPress={() => onNetworkChange(networkType)}
             style={styles.networkCell}
             buttonIcon={IconName.MoreVertical}
-            onButtonClick={() => {
-              openModal(chainId, false, networkType, true);
+            buttonProps={{
+              onButtonClick: () => {
+                openModal(chainId, false, networkType, true);
+              },
             }}
           />
         );
@@ -558,7 +599,7 @@ const NetworkSelector = () => {
             imageSource,
             size: avatarSize,
           }}
-          isSelected={chainId === providerConfig.chainId}
+          isSelected={chainId === selectedChainId}
           onPress={() => onNetworkChange(networkType)}
           style={styles.networkCell}
         />
@@ -585,7 +626,7 @@ const NetworkSelector = () => {
           const { PreferencesController } = Engine.context;
           PreferencesController.setShowTestNetworks(value);
         }}
-        value={isTestNet(providerConfig.chainId) || showTestNetworks}
+        value={isTestNet(selectedChainId) || showTestNetworks}
         trackColor={{
           true: colors.primary.default,
           false: colors.border.muted,
@@ -593,7 +634,7 @@ const NetworkSelector = () => {
         thumbColor={theme.brandColors.white}
         ios_backgroundColor={colors.border.muted}
         testID={NetworkListModalSelectorsIDs.TEST_NET_TOGGLE}
-        disabled={isTestNet(providerConfig.chainId)}
+        disabled={isTestNet(selectedChainId)}
       />
     </View>
   );
@@ -620,6 +661,7 @@ const NetworkSelector = () => {
             searchString.length > 0 ? filteredNetworks : undefined
           }
           showCompletionMessage={false}
+          showPopularNetworkModal
           hideWarningIcons
         />
       </View>
@@ -868,7 +910,7 @@ const NetworkSelector = () => {
                 });
               }}
             />
-            {showNetworkMenuModal.chainId !== providerConfig.chainId &&
+            {showNetworkMenuModal.chainId !== selectedChainId &&
             showNetworkMenuModal.displayEdit ? (
               <AccountAction
                 actionTitle={strings('app_settings.delete')}

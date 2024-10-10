@@ -124,6 +124,11 @@ remapEnvVariable() {
     echo "Successfully remapped $old_var_name to $new_var_name."
 }
 
+remapEnvVariableLocal() {
+  	echo "Remapping local env variables for development"
+  	remapEnvVariable "MM_SENTRY_DSN_DEV" "MM_SENTRY_DSN"
+}
+
 remapEnvVariableQA() {
   	echo "Remapping QA env variable names to match QA values"
   	remapEnvVariable "SEGMENT_WRITE_KEY_QA" "SEGMENT_WRITE_KEY"
@@ -178,8 +183,6 @@ prebuild_ios(){
 }
 
 prebuild_android(){
-	adb kill-server
-	adb start-server
 	prebuild
 	# Copy JS files for injection
 	yes | cp -rf app/core/InpageBridgeWeb3.js android/app/src/main/assets/.
@@ -205,6 +208,7 @@ prebuild_android(){
 }
 
 buildAndroidRun(){
+	remapEnvVariableLocal
 	prebuild_android
 	react-native run-android --port=$WATCHER_PORT --variant=prodDebug --active-arch-only
 }
@@ -220,6 +224,7 @@ buildAndroidRunFlask(){
 }
 
 buildIosSimulator(){
+	remapEnvVariableLocal
 	prebuild_ios
 	if [ -n "$IOS_SIMULATOR" ]; then
 		SIM_OPTION="--simulator \"$IOS_SIMULATOR\""
@@ -256,6 +261,7 @@ runIosE2E(){
 }
 
 buildIosDevice(){
+	remapEnvVariableLocal
 	prebuild_ios
 	react-native run-ios --port=$WATCHER_PORT --device
 }
@@ -289,11 +295,11 @@ generateArchivePackages() {
 }
 
 buildIosRelease(){
-
-  remapEnvVariableRelease
+  	remapEnvVariableRelease
 
 	# Enable Sentry to auto upload source maps and debug symbols
 	export SENTRY_DISABLE_AUTO_UPLOAD="false"
+
 	prebuild_ios
 
 	# Replace release.xcconfig with ENV vars
@@ -355,7 +361,8 @@ buildIosReleaseE2E(){
 }
 
 buildIosQA(){
-  remapEnvVariableQA
+  	remapEnvVariableQA
+
 	prebuild_ios
 
   	echo "Start QA build..."
@@ -379,7 +386,7 @@ buildIosQA(){
 
 
 buildAndroidQA(){
-  remapEnvVariableQA
+  	remapEnvVariableQA
 
 	if [ "$PRE_RELEASE" = false ] ; then
 		adb uninstall io.metamask.qa
