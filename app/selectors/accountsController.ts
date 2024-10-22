@@ -5,6 +5,7 @@ import { createSelector } from 'reselect';
 import { RootState } from '../reducers';
 import { createDeepEqualSelector } from './util';
 import { selectFlattenedKeyringAccounts } from './keyringController';
+import { InternalAccount } from '@metamask/keyring-api';
 
 /**
  *
@@ -20,7 +21,7 @@ const selectAccountsControllerState = (state: RootState) =>
 export const selectInternalAccounts = createDeepEqualSelector(
   selectAccountsControllerState,
   selectFlattenedKeyringAccounts,
-  (accountControllerState, orderedKeyringAccounts) => {
+  (accountControllerState, orderedKeyringAccounts): InternalAccount[] => {
     const keyringAccountsMap = new Map(
       orderedKeyringAccounts.map((account, index) => [
         account.toLowerCase(),
@@ -66,5 +67,16 @@ export const selectSelectedInternalAccountChecksummedAddress = createSelector(
   (account) => {
     const selectedAddress = account?.address;
     return selectedAddress ? toChecksumHexAddress(selectedAddress) : undefined;
+  },
+);
+
+/**
+ * A memoized selector that returns the selected internal account address
+ */
+export const selectSelectedInternalAccountAddress = createSelector(
+  selectSelectedInternalAccount,
+  (account) => {
+    const selectedAddress = account?.address;
+    return selectedAddress || undefined;
   },
 );

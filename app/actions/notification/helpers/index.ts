@@ -45,7 +45,6 @@ export const enableProfileSyncing = async () => {
 
 export const disableProfileSyncing = async () => {
   try {
-    await Engine.context.NotificationServicesController.disableNotificationServices();
     await Engine.context.UserStorageController.disableProfileSyncing();
   } catch (error) {
     return getErrorMessage(error);
@@ -114,6 +113,27 @@ export const updateOnChainTriggersByAccount = async (accounts: string[]) => {
   }
 };
 
+export const createOnChainTriggersByAccount = async (
+  resetNotifications: boolean,
+) => {
+  try {
+    const { userStorage } =
+      await Engine.context.NotificationServicesController.createOnChainTriggers(
+        {
+          resetNotifications,
+        },
+      );
+
+    if (!userStorage) {
+      return getErrorMessage(
+        notificationsErrors.CREATE_ON_CHAIN_TRIGGERS_BY_ACCOUNT,
+      );
+    }
+  } catch (error) {
+    return getErrorMessage(error);
+  }
+};
+
 export const setFeatureAnnouncementsEnabled = async (
   featureAnnouncementsEnabled: boolean,
 ) => {
@@ -147,6 +167,23 @@ export const markMetamaskNotificationsAsRead = async (
     await Engine.context.NotificationServicesController.markMetamaskNotificationsAsRead(
       notifications,
     );
+  } catch (error) {
+    return getErrorMessage(error);
+  }
+};
+/**
+ * Perform the deletion of the notifications storage key and the creation of on chain triggers to reset the notifications.
+ *
+ * @returns {Promise<string | undefined>} A promise that resolves to a string error message or undefined if successful.
+ */
+export const performDeleteStorage = async (): Promise<string | undefined> => {
+  try {
+   await Engine.context.UserStorageController.performDeleteStorage('notifications.notification_settings');
+   await Engine.context.NotificationServicesController.createOnChainTriggers(
+    {
+      resetNotifications: true,
+    },
+  );
   } catch (error) {
     return getErrorMessage(error);
   }

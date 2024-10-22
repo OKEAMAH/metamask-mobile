@@ -1,4 +1,10 @@
-import React, { useEffect, useRef, useCallback, useContext } from 'react';
+import React, {
+  useEffect,
+  useRef,
+  useCallback,
+  useContext,
+  useLayoutEffect,
+} from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -6,6 +12,8 @@ import {
   TextStyle,
   InteractionManager,
   Linking,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import type { Theme } from '@metamask/design-tokens';
 import { connect, useDispatch, useSelector } from 'react-redux';
@@ -27,6 +35,7 @@ import {
   ToastContext,
   ToastVariants,
 } from '../../../component-library/components/Toast';
+import NotificationsService from '../../../util/notifications/services/NotificationService';
 import Engine from '../../../core/Engine';
 import CollectibleContracts from '../../UI/CollectibleContracts';
 import { MetaMetricsEvents } from '../../../core/Analytics';
@@ -43,6 +52,7 @@ import {
   isMainNet,
 } from '../../../util/networks';
 import {
+  selectNetworkConfigurations,
   selectProviderConfig,
   selectTicker,
 } from '../../../selectors/networkController';
@@ -71,17 +81,30 @@ import { RootState } from '../../../reducers';
 import usePrevious from '../../hooks/usePrevious';
 import { selectSelectedInternalAccountChecksummedAddress } from '../../../selectors/accountsController';
 import { selectAccountBalanceByChainId } from '../../../selectors/accountTrackerController';
-import { selectUseNftDetection } from '../../../selectors/preferencesController';
-import { setNftAutoDetectionModalOpen } from '../../../actions/security';
+import {
+  selectShowMultiRpcModal,
+  selectUseNftDetection,
+} from '../../../selectors/preferencesController';
+import {
+  setNftAutoDetectionModalOpen,
+  setMultiRpcMigrationModalOpen,
+} from '../../../actions/security';
 import {
   hideNftFetchingLoadingIndicator as hideNftFetchingLoadingIndicatorAction,
   showNftFetchingLoadingIndicator as showNftFetchingLoadingIndicatorAction,
 } from '../../../reducers/collectibles';
 import { getCurrentRoute } from '../../../reducers/navigation';
 import { WalletViewSelectorsIDs } from '../../../../e2e/selectors/wallet/WalletView.selectors';
-import { selectIsMetamaskNotificationsEnabled } from '../../../selectors/notifications';
+import {
+  getMetamaskNotificationsUnreadCount,
+  getMetamaskNotificationsReadCount,
+  selectIsMetamaskNotificationsEnabled,
+  selectIsProfileSyncingEnabled,
+} from '../../../selectors/notifications';
 import { ButtonVariants } from '../../../component-library/components/Buttons/Button';
-
+import { useListNotifications } from '../../../util/notifications/hooks/useNotifications';
+import { PortfolioBalance } from '../../UI/Tokens/TokenList/PortfolioBalance';
+import { isObject } from 'lodash';
 const createStyles = ({ colors, typography }: Theme) =>
   StyleSheet.create({
     base: {
@@ -97,12 +120,12 @@ const createStyles = ({ colors, typography }: Theme) =>
       backgroundColor: colors.primary.default,
     },
     tabStyle: {
-      paddingBottom: 0,
+      paddingBottom: 8,
       paddingVertical: 8,
     },
     tabBar: {
       borderColor: colors.background.default,
-      marginTop: 16,
+      marginBottom: 8,
     },
     textStyle: {
       ...(typography.sBodyMD as TextStyle),
@@ -143,7 +166,9 @@ const Wallet = ({
   showNftFetchingLoadingIndicator,
   hideNftFetchingLoadingIndicator,
 }: WalletProps) => {
+  const appState = useRef(AppState.currentState);
   const { navigate } = useNavigation();
+  const { listNotifications } = useListNotifications();
   const walletRef = useRef(null);
   const theme = useTheme();
   const { toastRef } = useContext(ToastContext);
@@ -151,6 +176,8 @@ const Wallet = ({
   const styles = createStyles(theme);
   const { colors } = theme;
   const dispatch = useDispatch();
+  const networkConfigurations = useSelector(selectNetworkConfigurations);
+
   /**
    * Object containing the balance of the current selected account
    */
@@ -272,10 +299,19 @@ const Wallet = ({
     selectIsMetamaskNotificationsEnabled,
   );
 
+  const isProfileSyncingEnabled = useSelector(selectIsProfileSyncingEnabled);
+
+  const unreadNotificationCount = useSelector(
+    getMetamaskNotificationsUnreadCount,
+  );
+
+  const readNotificationCount = useSelector(getMetamaskNotificationsReadCount);
+
   const networkName = useSelector(selectNetworkName);
 
   const networkImageSource = useSelector(selectNetworkImageSource);
   const useNftDetection = useSelector(selectUseNftDetection);
+  const showMultiRpcModal = useSelector(selectShowMultiRpcModal);
   const isNFTAutoDetectionModalViewed = useSelector(
     (state: RootState) => state.security.isNFTAutoDetectionModalViewed,
   );
@@ -291,6 +327,13 @@ const Wallet = ({
       chain_id: getDecimalChainId(providerConfig.chainId),
     });
   }, [navigate, providerConfig.chainId, trackEvent]);
+
+  const isNetworkDuplicated = Object.values(networkConfigurations).some(
+    (networkConfiguration) =>
+      isObject(networkConfiguration) &&
+      Array.isArray(networkConfiguration.rpcEndpoints) &&
+      networkConfiguration.rpcEndpoints.length > 1,
+  );
 
   const checkNftAutoDetectionModal = useCallback(() => {
     const isOnMainnet = isMainNet(providerConfig.chainId);
@@ -308,13 +351,28 @@ const Wallet = ({
     useNftDetection,
   ]);
 
+  const checkMultiRpcModal = useCallback(() => {
+    if (showMultiRpcModal && isNetworkDuplicated) {
+      navigation.navigate(Routes.MODAL.ROOT_MODAL_FLOW, {
+        screen: Routes.MODAL.MULTI_RPC_MIGRATION_MODAL,
+      });
+      dispatch(setMultiRpcMigrationModalOpen(true));
+    }
+  }, [dispatch, showMultiRpcModal, navigation, isNetworkDuplicated]);
+
   useEffect(() => {
     if (
       currentRouteName === 'Wallet' ||
       currentRouteName === 'SecuritySettings'
     ) {
       checkNftAutoDetectionModal();
+      checkMultiRpcModal();
     }
+
+    async function checkIfNotificationsAreEnabled() {
+      await NotificationsService.isDeviceNotificationEnabled();
+    }
+    checkIfNotificationsAreEnabled();
   });
 
   /**
@@ -377,15 +435,35 @@ const Wallet = ({
   useEffect(
     () => {
       requestAnimationFrame(async () => {
-        const { TokenDetectionController, AccountTrackerController } =
-          Engine.context;
-        TokenDetectionController.detectTokens();
+        const { AccountTrackerController } = Engine.context;
         AccountTrackerController.refresh();
       });
     },
     /* eslint-disable-next-line */
     [navigation, providerConfig.chainId],
   );
+
+  useLayoutEffect(() => {
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      if (
+        appState.current.match(/inactive|background/) &&
+        nextAppState === 'active'
+      ) {
+        listNotifications();
+      }
+
+      appState.current = nextAppState;
+    };
+
+    const subscription = AppState.addEventListener(
+      'change',
+      handleAppStateChange,
+    );
+    listNotifications();
+    return () => {
+      subscription.remove();
+    };
+  }, [listNotifications]);
 
   useEffect(() => {
     navigation.setOptions(
@@ -396,6 +474,9 @@ const Wallet = ({
         navigation,
         colors,
         isNotificationEnabled,
+        isProfileSyncingEnabled,
+        unreadNotificationCount,
+        readNotificationCount,
       ),
     );
     /* eslint-disable-next-line */
@@ -406,6 +487,9 @@ const Wallet = ({
     networkImageSource,
     onTitlePress,
     isNotificationEnabled,
+    isProfileSyncingEnabled,
+    unreadNotificationCount,
+    readNotificationCount,
   ]);
 
   const renderTabBar = useCallback(
@@ -509,29 +593,32 @@ const Wallet = ({
         {selectedAddress ? (
           <WalletAccount style={styles.walletAccount} ref={walletRef} />
         ) : null}
-        <ScrollableTabView
-          renderTabBar={renderTabBar}
-          // eslint-disable-next-line react/jsx-no-bind
-          onChangeTab={onChangeTab}
-        >
-          <Tokens
-            tabLabel={strings('wallet.tokens')}
-            key={'tokens-tab'}
-            navigation={navigation}
-            // TODO - Consolidate into the correct type.
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-ignore
-            tokens={assets}
-          />
-          <CollectibleContracts
-            // TODO - Extend component to support injected tabLabel prop.
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-ignore
-            tabLabel={strings('wallet.collectibles')}
-            key={'nfts-tab'}
-            navigation={navigation}
-          />
-        </ScrollableTabView>
+        <>
+          {accountBalanceByChainId && <PortfolioBalance />}
+          <ScrollableTabView
+            renderTabBar={renderTabBar}
+            // eslint-disable-next-line react/jsx-no-bind
+            onChangeTab={onChangeTab}
+          >
+            <Tokens
+              tabLabel={strings('wallet.tokens')}
+              key={'tokens-tab'}
+              navigation={navigation}
+              // TODO - Consolidate into the correct type.
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              // @ts-ignore
+              tokens={assets}
+            />
+            <CollectibleContracts
+              // TODO - Extend component to support injected tabLabel prop.
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              // @ts-ignore
+              tabLabel={strings('wallet.collectibles')}
+              key={'nfts-tab'}
+              navigation={navigation}
+            />
+          </ScrollableTabView>
+        </>
       </View>
     );
   }, [

@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
-import { RefreshControl, TouchableOpacity, View } from 'react-native';
+import {
+  ImageSourcePropType,
+  RefreshControl,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 import { ChainId, toHex } from '@metamask/controller-utils';
 import { useSelector } from 'react-redux';
@@ -149,16 +154,22 @@ function NetworkSwitcher() {
   const switchNetwork = useCallback(
     (networkConfiguration) => {
       const { CurrencyRateController, NetworkController } = Engine.context;
-      const entry = Object.entries(networkConfigurations).find(
-        ([_a, { chainId }]) => chainId === networkConfiguration.chainId,
+      const config = Object.values(networkConfigurations).find(
+        ({ chainId }) => chainId === networkConfiguration.chainId,
       );
 
-      if (entry) {
-        const [networkConfigurationId] = entry;
-        const { ticker } = networkConfiguration;
+      if (config) {
+        const {
+          nativeCurrency: ticker,
+          rpcEndpoints,
+          defaultRpcEndpointIndex,
+        } = config;
+
+        const { networkClientId } =
+          rpcEndpoints?.[defaultRpcEndpointIndex] ?? {};
 
         CurrencyRateController.updateExchangeRate(ticker);
-        NetworkController.setActiveNetwork(networkConfigurationId);
+        NetworkController.setActiveNetwork(networkClientId);
         navigateToGetStarted();
       }
     },
@@ -310,7 +321,9 @@ function NetworkSwitcher() {
                           variant={AvatarVariant.Network}
                           size={AvatarSize.Sm}
                           name={'Ethereum Mainnet'}
-                          imageSource={imageIcons.ETHEREUM}
+                          imageSource={
+                            imageIcons.ETHEREUM as ImageSourcePropType
+                          }
                         />
                       </View>
 
@@ -340,7 +353,9 @@ function NetworkSwitcher() {
                           variant={AvatarVariant.Network}
                           size={AvatarSize.Sm}
                           name={'Linea Mainnet'}
-                          imageSource={imageIcons['LINEA-MAINNET']}
+                          imageSource={
+                            imageIcons['LINEA-MAINNET'] as ImageSourcePropType
+                          }
                         />
                       </View>
                       <Text bold>Linea Main Network</Text>
@@ -366,6 +381,7 @@ function NetworkSwitcher() {
                   shouldNetworkSwitchPopToWallet={false}
                   customNetworksList={rampNetworksDetails}
                   showCompletionMessage={false}
+                  showPopularNetworkModal
                   displayContinue
                 />
               </>

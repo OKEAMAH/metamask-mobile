@@ -28,7 +28,6 @@ import PickerNetwork from '../../../component-library/components/Pickers/PickerN
 import BrowserUrlBar from '../BrowserUrlBar';
 import generateTestId from '../../../../wdio/utils/generateTestId';
 import { NAV_ANDROID_BACK_BUTTON } from '../../../../wdio/screen-objects/testIDs/Screens/NetworksScreen.testids';
-import { ASSET_BACK_BUTTON } from '../../../../wdio/screen-objects/testIDs/Screens/TokenOverviewScreen.testIds';
 import { REQUEST_SEARCH_RESULTS_BACK_BUTTON } from '../../../../wdio/screen-objects/testIDs/Screens/RequestToken.testIds';
 import { BACK_BUTTON_SIMPLE_WEBVIEW } from '../../../../wdio/screen-objects/testIDs/Components/SimpleWebView.testIds';
 import Routes from '../../../constants/navigation/Routes';
@@ -53,6 +52,7 @@ import Icon, {
   IconColor,
 } from '../../../component-library/components/Icons/Icon';
 import { AddContactViewSelectorsIDs } from '../../../../e2e/selectors/Settings/Contacts/AddContactView.selectors';
+import { ImportTokenViewSelectorsIDs } from '../../../../e2e/selectors/wallet/ImportTokenView.selectors';
 
 const trackEvent = (event, params = {}) => {
   MetaMetrics.getInstance().trackEvent(event, params);
@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
     paddingVertical: Device.isAndroid() ? 14 : 8,
   },
   notificationButton: {
-    marginRight: 4,
+    marginHorizontal: 4,
   },
   disabled: {
     opacity: 0.3,
@@ -118,6 +118,21 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     marginLeft: 16,
+  },
+  notificationsWrapper: {
+    position: 'relative',
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  notificationsBadge: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+
+    position: 'absolute',
+    top: 2,
+    right: 10,
   },
 });
 
@@ -901,6 +916,9 @@ export function getWalletNavbarOptions(
   navigation,
   themeColors,
   isNotificationEnabled,
+  isProfileSyncingEnabled,
+  unreadNotificationCount,
+  readNotificationCount,
 ) {
   const innerStyles = StyleSheet.create({
     headerStyle: {
@@ -963,7 +981,7 @@ export function getWalletNavbarOptions(
   };
 
   function openQRScanner() {
-    navigation.navigate('QRScanner', {
+    navigation.navigate(Routes.QR_TAB_SWITCHER, {
       onScanSuccess,
     });
     trackEvent(MetaMetricsEvents.WALLET_QR_SCANNER);
@@ -972,8 +990,16 @@ export function getWalletNavbarOptions(
   function handleNotificationOnPress() {
     if (isNotificationEnabled && isNotificationsFeatureEnabled()) {
       navigation.navigate(Routes.NOTIFICATIONS.VIEW);
+      trackEvent(MetaMetricsEvents.NOTIFICATIONS_MENU_OPENED, {
+        unread_count: unreadNotificationCount,
+        read_count: readNotificationCount,
+      });
     } else {
       navigation.navigate(Routes.NOTIFICATIONS.OPT_IN_STACK);
+      trackEvent(MetaMetricsEvents.NOTIFICATIONS_ACTIVATED, {
+        action_type: 'started',
+        is_profile_syncing_enabled: isProfileSyncingEnabled,
+      });
     }
   }
 
@@ -998,16 +1024,30 @@ export function getWalletNavbarOptions(
     ),
     headerRight: () => (
       <View style={styles.leftButtonContainer}>
-        {isNotificationsFeatureEnabled() && (
-          <ButtonIcon
-            iconColor={IconColor.Primary}
-            onPress={handleNotificationOnPress}
-            iconName={IconName.Notification}
-            size={IconSize.Xl}
-            testID={WalletViewSelectorsIDs.WALLET_NOTIFICATIONS_BUTTON}
-            style={styles.notificationButton}
-          />
-        )}
+        <View style={styles.notificationsWrapper}>
+          {isNotificationsFeatureEnabled() && (
+            <ButtonIcon
+              iconColor={IconColor.Primary}
+              onPress={handleNotificationOnPress}
+              iconName={IconName.Notification}
+              size={IconSize.Xl}
+              testID={WalletViewSelectorsIDs.WALLET_NOTIFICATIONS_BUTTON}
+              style={styles.notificationButton}
+            />
+          )}
+          {isNotificationEnabled && (
+            <View
+              style={[
+                styles.notificationsBadge,
+                {
+                  backgroundColor: unreadNotificationCount
+                    ? themeColors.error.default
+                    : themeColors.background.transparent,
+                },
+              ]}
+            />
+          )}
+        </View>
 
         <ButtonIcon
           iconColor={IconColor.Primary}
@@ -1078,7 +1118,7 @@ export function getImportTokenNavbarOptions(
       // eslint-disable-next-line react/jsx-no-bind
       <TouchableOpacity
         style={styles.backButton}
-        {...generateTestId(Platform, ASSET_BACK_BUTTON)}
+        testID={ImportTokenViewSelectorsIDs.BACK_BUTTON}
       >
         <ButtonIcon
           iconName={IconName.Close}
@@ -1137,7 +1177,7 @@ export function getNftDetailsNavbarOptions(
       <TouchableOpacity
         onPress={() => navigation.pop()}
         style={styles.backButton}
-        {...generateTestId(Platform, ASSET_BACK_BUTTON)}
+        testID={ImportTokenViewSelectorsIDs.BACK_BUTTON}
       >
         <Icon
           name={IconName.ArrowLeft}
@@ -1260,7 +1300,7 @@ export function getNetworkNavbarOptions(
       <TouchableOpacity
         onPress={() => navigation.pop()}
         style={styles.backButton}
-        {...generateTestId(Platform, ASSET_BACK_BUTTON)}
+        testID={ImportTokenViewSelectorsIDs.BACK_BUTTON}
       >
         <IonicIcon
           name={'ios-close'}
@@ -1783,3 +1823,62 @@ export const getSettingsNavigationOptions = (title, themeColors) => {
     ...innerStyles,
   };
 };
+
+/**
+ *
+ * @param {String} title - Navbar Title.
+ * @param {NavigationProp<ParamListBase>} navigation Navigation object returned from useNavigation hook.
+ * @param {ThemeColors} themeColors theme.colors returned from useStyles hook.
+ * @param {{ backgroundColor?: string, hasCancelButton?: boolean, hasBackButton?: boolean }} [options] - Optional options for navbar.
+ * @returns Staking Navbar Component.
+ */
+export function getStakingNavbar(title, navigation, themeColors, options) {
+  const { hasBackButton = true, hasCancelButton = true } = options ?? {};
+
+  const innerStyles = StyleSheet.create({
+    headerStyle: {
+      backgroundColor:
+        options?.backgroundColor ?? themeColors.background.default,
+      shadowOffset: null,
+    },
+    headerLeft: {
+      marginHorizontal: 16,
+    },
+    headerButtonText: {
+      color: themeColors.primary.default,
+      fontSize: 14,
+      ...fontStyles.normal,
+    },
+  });
+
+  function navigationPop() {
+    navigation.goBack();
+  }
+
+  return {
+    headerTitle: () => (
+      <MorphText variant={TextVariant.HeadingMD}>{title}</MorphText>
+    ),
+    headerStyle: innerStyles.headerStyle,
+    headerLeft: () =>
+      hasBackButton ? (
+        <ButtonIcon
+          size={ButtonIconSizes.Lg}
+          iconName={IconName.ArrowLeft}
+          onPress={navigationPop}
+          style={innerStyles.headerLeft}
+        />
+      ) : null,
+    headerRight: () =>
+      hasCancelButton ? (
+        <TouchableOpacity
+          onPress={() => navigation.dangerouslyGetParent()?.pop()}
+          style={styles.closeButton}
+        >
+          <Text style={innerStyles.headerButtonText}>
+            {strings('navigation.cancel')}
+          </Text>
+        </TouchableOpacity>
+      ) : null,
+  };
+}

@@ -38,12 +38,13 @@ import {
   getAddressAccountType,
   safeToChecksumAddress,
 } from '../../../util/address';
-import { getUrlObj, prefixUrlWithProtocol } from '../../../util/browser';
+import { getHost, getUrlObj, prefixUrlWithProtocol } from '../../../util/browser';
 import { getActiveTabUrl } from '../../../util/transactions';
 import { Account, useAccounts } from '../../hooks/useAccounts';
 
 // Internal dependencies.
-import { StyleSheet, ImageURISource } from 'react-native';
+import { PermissionsRequest } from '@metamask/permission-controller';
+import { ImageURISource, StyleSheet } from 'react-native';
 import URLParse from 'url-parse';
 import PhishingModal from '../../../components/UI/PhishingModal';
 import { useMetrics } from '../../../components/hooks/useMetrics';
@@ -56,9 +57,9 @@ import {
 import AppConstants from '../../../core/AppConstants';
 import SDKConnect from '../../../core/SDKConnect/SDKConnect';
 import DevLogger from '../../../core/SDKConnect/utils/DevLogger';
+import { RootState } from '../../../reducers';
 import { trackDappViewedEvent } from '../../../util/metrics';
 import { useTheme } from '../../../util/theme';
-import { WALLET_CONNECT_ORIGIN } from '../../../util/walletconnect';
 import useFavicon from '../../hooks/useFavicon/useFavicon';
 import { SourceType } from '../../hooks/useMetrics/useMetrics.types';
 import {
@@ -68,7 +69,10 @@ import {
 import AccountConnectMultiSelector from './AccountConnectMultiSelector';
 import AccountConnectSingle from './AccountConnectSingle';
 import AccountConnectSingleSelector from './AccountConnectSingleSelector';
-import { RootState } from '../../../reducers';
+import { PermissionsSummaryProps } from '../../../components/UI/PermissionsSummary/PermissionsSummary.types';
+import PermissionsSummary from '../../../components/UI/PermissionsSummary';
+import { isMultichainVersion1Enabled } from '../../../util/networks';
+import NetworkConnectMultiSelector from '../NetworkConnect/NetworkConnectMultiSelector';
 
 const createStyles = () =>
   StyleSheet.create({
@@ -84,9 +88,6 @@ const AccountConnect = (props: AccountConnectProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const navigation = useNavigation();
   const { trackEvent } = useMetrics();
-
-  const [isOriginWalletConnect, setIsOriginWalletConnect] = useState(false);
-  const [isOriginMMSDKRemoteConn, setIsOriginMMSDKRemoteConn] = useState(false);
 
   const [blockedUrl, setBlockedUrl] = useState('');
 
@@ -118,11 +119,8 @@ const AccountConnect = (props: AccountConnectProps) => {
   // origin is set to the last active tab url in the browser which can conflict with sdk
   const inappBrowserOrigin: string = useSelector(getActiveTabUrl, isEqual);
   const accountsLength = useSelector(selectAccountsLength);
+  const { wc2Metadata } = useSelector((state: RootState) => state.sdk);
 
-  // TODO: pending transaction controller update, we need to have a parameter that can be extracted from the metadata to know the correct source (inappbrowser, walletconnect, sdk)
-  // on inappBrowser: hostname from inappBrowserOrigin
-  // on walletConnect: hostname from hostInfo
-  // on sdk: channelId
   const { origin: channelIdOrHostname } = hostInfo.metadata as {
     id: string;
     origin: string;
@@ -136,68 +134,54 @@ const AccountConnect = (props: AccountConnectProps) => {
 
   const isChannelId = isUUID(channelIdOrHostname);
 
-  useEffect(() => {
-    if (!channelIdOrHostname) {
-      setIsOriginWalletConnect(false);
-      setIsOriginMMSDKRemoteConn(false);
-
-      return;
-    }
-
-    setIsOriginWalletConnect(
-      channelIdOrHostname.startsWith(WALLET_CONNECT_ORIGIN),
-    );
-    setIsOriginMMSDKRemoteConn(
-      channelIdOrHostname.startsWith(AppConstants.MM_SDK.SDK_REMOTE_ORIGIN),
-    );
-  }, [channelIdOrHostname]);
-
   const sdkConnection = SDKConnect.getInstance().getConnection({
     channelId: channelIdOrHostname,
   });
 
-  const hostname = channelIdOrHostname
-    ? channelIdOrHostname.indexOf('.') !== -1
-      ? channelIdOrHostname
-      : sdkConnection?.originatorInfo?.url ?? ''
-    : inappBrowserOrigin;
+  const isOriginMMSDKRemoteConn = sdkConnection !== undefined;
+
+  const isOriginWalletConnect = !isOriginMMSDKRemoteConn && wc2Metadata?.id && wc2Metadata?.id.length > 0;
 
   const dappIconUrl = sdkConnection?.originatorInfo?.icon;
   const dappUrl = sdkConnection?.originatorInfo?.url ?? '';
 
-  const domainTitle = useMemo(() => {
+  const { domainTitle, hostname } = useMemo(() => {
     let title = '';
+    let dappHostname = dappUrl || channelIdOrHostname;
 
-    if (isOriginWalletConnect) {
+    if (
+      isOriginMMSDKRemoteConn &&
+      channelIdOrHostname.startsWith(AppConstants.MM_SDK.SDK_REMOTE_ORIGIN)
+    ) {
       title = getUrlObj(
-        (channelIdOrHostname as string).split(WALLET_CONNECT_ORIGIN)[1],
+        channelIdOrHostname.split(AppConstants.MM_SDK.SDK_REMOTE_ORIGIN)[1],
       ).origin;
-    } else if (isOriginMMSDKRemoteConn) {
-      title = getUrlObj(
-        (channelIdOrHostname as string).split(
-          AppConstants.MM_SDK.SDK_REMOTE_ORIGIN,
-        )[1],
-      ).origin;
+    } else if (isOriginWalletConnect) {
+      title = getUrlObj(channelIdOrHostname).origin;
+      dappHostname = title;
     } else if (!isChannelId && (dappUrl || channelIdOrHostname)) {
       title = prefixUrlWithProtocol(dappUrl || channelIdOrHostname);
+      dappHostname = inappBrowserOrigin;
     } else {
       title = strings('sdk.unknown');
     }
 
-    return title;
+    return { domainTitle: title, hostname: dappHostname };
   }, [
     isOriginWalletConnect,
+    inappBrowserOrigin,
     isOriginMMSDKRemoteConn,
     isChannelId,
     dappUrl,
     channelIdOrHostname,
   ]);
 
-  const urlWithProtocol = hostname
-    ? prefixUrlWithProtocol(hostname)
-    : domainTitle;
+  const urlWithProtocol =
+    hostname && !isUUID(hostname)
+      ? prefixUrlWithProtocol(getHost(hostname))
+      : domainTitle;
 
-  const isAllowedUrl = useCallback((url: string) => {
+  const isAllowedOrigin = useCallback((origin: string) => {
     const { PhishingController } = Engine.context;
 
     // Update phishing configuration if it is out-of-date
@@ -205,36 +189,43 @@ const AccountConnect = (props: AccountConnectProps) => {
     // down network requests. The configuration is updated for the next request.
     PhishingController.maybeUpdateState();
 
-    const phishingControllerTestResult = PhishingController.test(url);
+    const phishingControllerTestResult = PhishingController.test(origin);
 
     return !phishingControllerTestResult.result;
   }, []);
 
   useEffect(() => {
     const url = dappUrl || channelIdOrHostname || '';
-
-    const cleanUrl = url.replace(/^https?:\/\//, '');
-
-    const isAllowed = isAllowedUrl(cleanUrl);
+    const isAllowed = isAllowedOrigin(url);
 
     if (!isAllowed) {
       setBlockedUrl(dappUrl);
       setShowPhishingModal(true);
     }
-  }, [isAllowedUrl, dappUrl, channelIdOrHostname]);
+  }, [isAllowedOrigin, dappUrl, channelIdOrHostname]);
 
   const faviconSource = useFavicon(
     inappBrowserOrigin || (!isChannelId ? channelIdOrHostname : ''),
   );
 
   const actualIcon = useMemo(() => {
+    // Priority to dappIconUrl
+    if (dappIconUrl) {
+      return { uri: dappIconUrl };
+    }
+
+    if (isOriginWalletConnect) {
+      // fetch icon from store
+      return { uri: wc2Metadata?.icon ?? '' };
+    }
+
     const favicon = faviconSource as ImageURISource;
     if ('uri' in favicon) {
       return faviconSource;
     }
 
-    return { uri: dappIconUrl ?? '' };
-  }, [dappIconUrl, faviconSource]);
+    return { uri: '' };
+  }, [dappIconUrl, wc2Metadata, faviconSource, isOriginWalletConnect]);
 
   const secureIcon = useMemo(
     () =>
@@ -248,15 +239,16 @@ const AccountConnect = (props: AccountConnectProps) => {
     // walletconnect channelId format: app.name.org
     // sdk channelId format: uuid
     // inappbrowser channelId format: app.name.org but origin is set
-    if (channelIdOrHostname) {
-      if (sdkConnection) {
-        return SourceType.SDK;
-      }
+    if (isOriginWalletConnect) {
       return SourceType.WALLET_CONNECT;
     }
 
+    if (sdkConnection) {
+      return SourceType.SDK;
+    }
+
     return SourceType.IN_APP_BROWSER;
-  }, [sdkConnection, channelIdOrHostname]);
+  }, [isOriginWalletConnect, sdkConnection]);
 
   // Refreshes selected addresses based on the addition and removal of accounts.
   useEffect(() => {
@@ -345,7 +337,7 @@ const AccountConnect = (props: AccountConnectProps) => {
   );
 
   const handleConnect = useCallback(async () => {
-    const request = {
+    const request: PermissionsRequest = {
       ...hostInfo,
       metadata: {
         ...hostInfo.metadata,
@@ -353,7 +345,6 @@ const AccountConnect = (props: AccountConnectProps) => {
       },
       approvedAccounts: selectedAddresses,
     };
-
     const connectedAccountLength = selectedAddresses.length;
     const activeAddress = selectedAddresses[0];
     const activeAccountName = getAccountNameWithENS({
@@ -559,6 +550,24 @@ const AccountConnect = (props: AccountConnectProps) => {
     setUserIntent,
   ]);
 
+  const renderPermissionsSummaryScreen = useCallback(() => {
+    const permissionsSummaryProps: PermissionsSummaryProps = {
+      currentPageInformation: {
+        currentEnsName: '',
+        icon: faviconSource as string,
+        url: urlWithProtocol,
+      },
+      onEdit: () => {
+        setScreen(AccountConnectScreens.MultiConnectSelector);
+      },
+      onEditNetworks: () =>
+        setScreen(AccountConnectScreens.MultiConnectNetworkSelector),
+      onUserAction: setUserIntent,
+      isAlreadyConnected: false,
+    };
+    return <PermissionsSummary {...permissionsSummaryProps} />;
+  }, [faviconSource, urlWithProtocol]);
+
   const renderSingleConnectSelectorScreen = useCallback(
     () => (
       <AccountConnectSingleSelector
@@ -596,20 +605,39 @@ const AccountConnect = (props: AccountConnectProps) => {
         onUserAction={setUserIntent}
         onBack={() => setScreen(AccountConnectScreens.SingleConnect)}
         connection={sdkConnection}
+        hostname={hostname}
+        onPrimaryActionButtonPress={
+          isMultichainVersion1Enabled
+            ? () => setScreen(AccountConnectScreens.SingleConnect)
+            : undefined
+        }
       />
     ),
     [
       accounts,
       ensByAccountAddress,
       selectedAddresses,
-      setSelectedAddresses,
       isLoading,
-      setUserIntent,
       faviconSource,
-      urlWithProtocol,
       secureIcon,
+      urlWithProtocol,
       sdkConnection,
+      hostname,
     ],
+  );
+
+  const renderMultiConnectNetworkSelectorScreen = useCallback(
+    () => (
+      <NetworkConnectMultiSelector
+        onSelectNetworkIds={setSelectedAddresses}
+        isLoading={isLoading}
+        onUserAction={setUserIntent}
+        urlWithProtocol={urlWithProtocol}
+        hostname={hostname}
+        onBack={() => setScreen(AccountConnectScreens.SingleConnect)}
+      />
+    ),
+    [isLoading, urlWithProtocol, hostname],
   );
 
   const renderPhishingModal = useCallback(
@@ -651,17 +679,23 @@ const AccountConnect = (props: AccountConnectProps) => {
   const renderConnectScreens = useCallback(() => {
     switch (screen) {
       case AccountConnectScreens.SingleConnect:
-        return renderSingleConnectScreen();
+        return isMultichainVersion1Enabled
+          ? renderPermissionsSummaryScreen()
+          : renderSingleConnectScreen();
       case AccountConnectScreens.SingleConnectSelector:
         return renderSingleConnectSelectorScreen();
       case AccountConnectScreens.MultiConnectSelector:
         return renderMultiConnectSelectorScreen();
+      case AccountConnectScreens.MultiConnectNetworkSelector:
+        return renderMultiConnectNetworkSelectorScreen();
     }
   }, [
     screen,
     renderSingleConnectScreen,
+    renderPermissionsSummaryScreen,
     renderSingleConnectSelectorScreen,
     renderMultiConnectSelectorScreen,
+    renderMultiConnectNetworkSelectorScreen,
   ]);
 
   return (

@@ -49,44 +49,61 @@ class EngineService {
     }
 
     const controllers = [
-      { name: 'AddressBookController' },
+      {
+        name: 'AddressBookController',
+        key: `${engine.context.AddressBookController.name}:stateChange`,
+      },
       { name: 'AssetsContractController' },
-      { name: 'NftController' },
+      { name: 'NftController', key: 'NftController:stateChange' },
       {
         name: 'TokensController',
+        key: `${engine.context.TokensController.name}:stateChange`,
       },
       {
         name: 'TokenDetectionController',
         key: `${engine.context.TokenDetectionController.name}:stateChange`,
       },
-      { name: 'NftDetectionController' },
+      {
+        name: 'NftDetectionController',
+        key: 'NftDetectionController:stateChange',
+      },
       {
         name: 'KeyringController',
         key: `${engine.context.KeyringController.name}:stateChange`,
       },
-      { name: 'AccountTrackerController' },
+      {
+        name: 'AccountTrackerController',
+        key: 'AccountTrackerController:stateChange',
+      },
       {
         name: 'NetworkController',
         key: AppConstants.NETWORK_STATE_CHANGE_EVENT,
       },
       {
         name: 'PhishingController',
-        key: `${engine.context.PhishingController.name}:maybeUpdateState`,
+        key: `${engine.context.PhishingController.name}:stateChange`,
       },
       {
         name: 'PreferencesController',
         key: `${engine.context.PreferencesController.name}:stateChange`,
       },
       {
+        name: 'SelectedNetworkController',
+        key: `${engine.context.SelectedNetworkController.name}:stateChange`,
+      },
+      {
         name: 'TokenBalancesController',
         key: `${engine.context.TokenBalancesController.name}:stateChange`,
       },
-      { name: 'TokenRatesController' },
+      { name: 'TokenRatesController', key: 'TokenRatesController:stateChange' },
       {
         name: 'TransactionController',
         key: `${engine.context.TransactionController.name}:stateChange`,
       },
-      { name: 'SmartTransactionsController' },
+      {
+        name: 'SmartTransactionsController',
+        key: `${engine.context.SmartTransactionsController.name}:stateChange`,
+      },
       { name: 'SwapsController' },
       {
         name: 'TokenListController',
